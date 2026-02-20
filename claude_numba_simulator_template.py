@@ -21,28 +21,21 @@ See README.md for a worked example.
 import numpy as np
 import numba as nb
 
-from general_numba_simulator import gen_simulator, compare_results, SimulatorSpec
+from claude_general_numba_simulator import gen_simulator, compare_results, SimulatorSpec
 
 
 # np.random.randint(low, high) — note: high is EXCLUSIVE
 # Example: np.random.randint(1, 7) gives a d6 roll (1–6 inclusive).
 
 @nb.njit(cache=True)
-def simulator_0(n):
-    """simulate the coupon collector problem"""
+def simulator_0():
+    """[description]"""
     # Implement one trial here.
     # Return a scalar (single output) or a fixed-length 1-D array (multiple outputs).
     
-    types_found = 0
-    num_rolls = 0
-    while types_found < n:
-        roll = np.random.randint(1, n+1)
-        if roll > types_found:
-            types_found += 1
-        
-        num_rolls += 1
-        
-    return num_rolls
+    
+    
+    return None
 
 
 if __name__ == "__main__":
@@ -55,30 +48,10 @@ if __name__ == "__main__":
     scenarios_list = [
         SimulatorSpec(
             sim_func=simulator_0,
-            args={"n": 10}, 
-            categories=("num_rolls",), 
+            args={}, 
+            categories=("",), 
         ),
-        SimulatorSpec(
-            sim_func=simulator_0,
-            args={"n": 20}, 
-            categories=("num_rolls",), 
-        ),
-        SimulatorSpec(
-            sim_func=simulator_0,
-            args={"n": 40}, 
-            categories=("num_rolls",), 
-        ),
-        SimulatorSpec(
-            sim_func=simulator_0,
-            args={"n": 80}, 
-            categories=("num_rolls",), 
-        ),
-        SimulatorSpec(
-            sim_func=simulator_0,
-            args={"n": 160}, 
-            categories=("num_rolls",), 
-        ),
-        
+
     ]
 
 
@@ -91,7 +64,7 @@ if __name__ == "__main__":
     #   "individual" — per-scenario proportion + CDF plots
     #   "compare"    — overlay comparison across scenarios (no-op if only one scenario)
     #   "both"       — individual plots, then comparison overlay
-    plot_mode = "none"
+    plot_mode = "individual"
 
     should_plot    = plot_mode in ("individual", "both")
     should_compare = plot_mode in ("compare", "both")
