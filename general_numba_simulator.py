@@ -14,6 +14,7 @@ compare_results      – Overlay proportion and CDF plots across multiple scenar
 
 See README.md for usage examples and template workflow.
 """
+import inspect
 import matplotlib.pyplot as plt
 from matplotlib.ticker import AutoMinorLocator
 import numpy as np
@@ -39,9 +40,11 @@ class SimulatorSpec(NamedTuple):
     Attributes:
         sim_func: A Numba ``@njit`` kernel that runs one trial and returns a
             scalar or 1-D array of float-compatible values.
-        args: A ``namedtuple`` whose fields are the fixed arguments forwarded
-            to ``sim_func`` on every trial. Field names appear in printed output
-            when ``show_args=True``.
+        args: A ``dict`` (``{"param": value, ...}``) or ``namedtuple`` whose
+            entries are the fixed arguments forwarded to ``sim_func`` on every
+            trial. For dicts, keys must be declared in the same order as the
+            kernel's parameters (Python 3.7+ insertion order is guaranteed).
+            Key/field names appear in printed output when ``show_args=True``.
         categories: Labels for each output value returned by ``sim_func``.
             The length must match the number of values the kernel returns.
     """
@@ -100,9 +103,65 @@ def _compute_counts(
     return unique_values, counts, proportions
 
 
+def _args_as_values(args: Any, sim_func: Callable | None = None) -> tuple:
+    """Return argument values as a positional tuple in kernel parameter order.
+
+    Supports both namedtuples (field order preserved) and plain dicts.  When
+    ``sim_func`` is provided and ``args`` is a dict, the dict's keys are
+    validated against the kernel's parameter names and values are extracted in
+    declaration order — so dict key insertion order does not matter.
+
+    Args:
+        args: A namedtuple or dict of kernel arguments.
+        sim_func: The Numba kernel the args will be forwarded to.  When
+            provided, dict keys are matched by name against the kernel's
+            parameter list and a ``ValueError`` is raised for missing or
+            unexpected keys.
+
+    Returns:
+        Tuple of argument values in kernel parameter declaration order.
+
+    Raises:
+        ValueError: If ``sim_func`` is given, ``args`` is a dict, and the
+            dict's keys do not exactly match the kernel's parameter names.
+    """
+    if isinstance(args, dict):
+        if sim_func is not None:
+            params = list(inspect.signature(sim_func).parameters.keys())
+            missing = set(params) - set(args.keys())
+            extra = set(args.keys()) - set(params)
+            if missing:
+                raise ValueError(
+                    f"Missing args for kernel '{sim_func.__name__}': {sorted(missing)}"
+                )
+            if extra:
+                raise ValueError(
+                    f"Unexpected args for kernel '{sim_func.__name__}': {sorted(extra)}"
+                )
+            return tuple(args[p] for p in params)
+        return tuple(args.values())
+    return tuple(args)
+
+
+def _args_as_dict(args: Any) -> dict:
+    """Return a name→value mapping from a namedtuple or plain dict.
+
+    Used for display purposes (``show_args`` output and plot legend labels).
+
+    Args:
+        args: A namedtuple or dict of kernel arguments.
+
+    Returns:
+        Dict mapping argument names to their values.
+    """
+    if isinstance(args, dict):
+        return args
+    return args._asdict()
+
+
 def _scenario_label(spec: SimulatorSpec) -> str:
     """Build a human-readable legend label from a scenario's function name and args."""
-    args_str = ", ".join(f"{k}={v}" for k, v in spec.args._asdict().items())
+    args_str = ", ".join(f"{k}={v}" for k, v in _args_as_dict(spec.args).items())
     return f"{spec.sim_func.__name__}({args_str})"
 
 
@@ -119,10 +178,12 @@ def make_mass_simulator(
     Returns:
         A compiled function ``driver(cap, seed) -> ndarray`` of shape
         ``(cap, len(spec.categories))``, where each row is the result of one
-        independent trial. Pass ``seed=-1`` to skip seeding.
+        independent trial. Results are stored as ``float32`` — exact for
+        integer-valued outputs up to 2**24 (~16.7 M), but lossy for
+        continuous or large-valued quantities. Pass ``seed=-1`` to skip seeding.
     """
     sim_func, args, categories = spec
-    fixed_args = tuple(args)
+    fixed_args = _args_as_values(args, sim_func)
     n_outputs = len(categories)
 
     # The inner driver is compiled with parallel=True so that nb.prange
@@ -140,7 +201,7 @@ def make_mass_simulator(
 
 
 def results_analyser(
-    simulator_w_args: SimulatorSpec,
+    spec: SimulatorSpec,
     results: np.ndarray,
     show_args: bool,
     should_plot: bool,
@@ -150,7 +211,7 @@ def results_analyser(
     """Print summary statistics and optionally plot distributions for all output categories.
 
     Args:
-        simulator_w_args: ``SimulatorSpec`` of ``(kernel, args_namedtuple, category_labels)``.
+        spec: ``SimulatorSpec`` of ``(kernel, args, category_labels)``.
         results: Raw simulation output, shape ``(n_trials, n_categories)``, dtype float32.
         show_args: If True, print the argument values alongside the simulator name.
         should_plot: If True, display a proportion bar chart and cumulative-probability
@@ -163,7 +224,7 @@ def results_analyser(
     Returns:
         Tuple of ``(means, stds)``, each a 1-D array with one value per category.
     """
-    simulator, args, categories = simulator_w_args
+    simulator, args, categories = spec
 
     # Compute column-wise statistics across all trials.
     means = np.mean(results, axis=0)
@@ -176,7 +237,7 @@ def results_analyser(
     if show_args:
         print(
             f"{simulator.__name__} args: "
-            f'{", ".join(f"{name}={value}" for name, value in args._asdict().items())}'
+            f'{", ".join(f"{name}={value}" for name, value in _args_as_dict(args).items())}'
         )
 
     print("")
@@ -273,7 +334,7 @@ def results_analyser(
 
 def gen_simulator(
     cap: int,
-    simulator_w_args: SimulatorSpec,
+    spec: SimulatorSpec,
     show_args: bool,
     should_plot: bool,
     seed: int | None = None,
@@ -287,7 +348,7 @@ def gen_simulator(
 
     Args:
         cap: Number of independent trials to simulate (e.g. ``10**6``).
-        simulator_w_args: ``SimulatorSpec`` of ``(kernel, args_namedtuple, category_labels)``.
+        spec: ``SimulatorSpec`` of ``(kernel, args, category_labels)``.
         show_args: If True, print the argument values in the output header.
         should_plot: If True, display proportion and cumulative-probability charts.
         seed: Optional integer seed for Numba's RNG. When provided, the driver
@@ -305,7 +366,7 @@ def gen_simulator(
             - ``analysis``: ``(means, stds)`` summary statistics from ``results_analyser``.
     """
     # Build (or retrieve from Numba's on-disk cache) the parallel driver.
-    mass_sim = make_mass_simulator(simulator_w_args)
+    mass_sim = make_mass_simulator(spec)
     if len(mass_sim.nopython_signatures) == 0:
         print("Preparing JIT kernel...", end="", flush=True)
         t0 = time.perf_counter()
@@ -319,7 +380,7 @@ def gen_simulator(
     print("")
 
     analysis = results_analyser(
-        simulator_w_args, results, show_args, should_plot, percentiles, prob_thresholds
+        spec, results, show_args, should_plot, percentiles, prob_thresholds
     )
 
     return results, analysis
@@ -341,9 +402,10 @@ def compare_results(collected: list[tuple[SimulatorSpec, np.ndarray]]) -> None:
         return
 
     categories = collected[0][0].categories
-    assert all(len(spec.categories) == len(categories) for spec, _ in collected), (
-        "All scenarios passed to compare_results must have the same number of output categories."
-    )
+    if not all(len(spec.categories) == len(categories) for spec, _ in collected):
+        raise ValueError(
+            "All scenarios passed to compare_results must have the same number of output categories."
+        )
 
     prop_cycle_colors = [c["color"] for c in plt.rcParams["axes.prop_cycle"]]
 

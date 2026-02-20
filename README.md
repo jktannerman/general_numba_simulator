@@ -34,22 +34,28 @@ def roll_advantage(num_dice, die_size):
     return best
 ```
 
-### 2. Declare an arguments type at module level
+### 2. Specify arguments as a dict
 
-Use a `namedtuple` — one per simulator. Field names appear in the printed header
-when `show_args=True`, and the tuple is positionally unpacked when calling the
-Numba kernel.
+Pass kernel arguments as a plain `dict` — no class definition needed. Dict keys
+appear in the printed header when `show_args=True` and in plot legend labels.
 
 ```python
-Arguments = namedtuple("Arguments", ["num_dice", "die_size"])
+args={"num_dice": 3, "die_size": 6}   # keys must match kernel parameter names (order doesn't matter)
 ```
+
+> **namedtuple alternative:** If you want a reusable type or IDE autocompletion on
+> argument names, namedtuples still work identically:
+> ```python
+> from collections import namedtuple
+> Arguments = namedtuple("Arguments", ["num_dice", "die_size"])
+> args=Arguments(num_dice=3, die_size=6)
+> ```
 
 ### 3. Build a scenarios list
 
 `scenarios_list` is a flat list of `SimulatorSpec` entries. Each entry contains
 the simulator, one set of argument values, and the output-category labels. Import
-`SimulatorSpec` and `compare_results` from the framework and use keyword arguments
-to keep things readable when argument lists grow:
+`SimulatorSpec` and `compare_results` from the framework:
 
 ```python
 from general_numba_simulator import gen_simulator, compare_results, SimulatorSpec
@@ -57,18 +63,18 @@ from general_numba_simulator import gen_simulator, compare_results, SimulatorSpe
 scenarios_list = [
     SimulatorSpec(
         sim_func=roll_advantage,
-        args=Arguments(num_dice=3, die_size=6),
+        args={"num_dice": 3, "die_size": 6},
         categories=("result",),
     ),
     SimulatorSpec(
         sim_func=roll_advantage,
-        args=Arguments(num_dice=2, die_size=6),
+        args={"num_dice": 2, "die_size": 6},
         categories=("result",),
     ),
 ]
 ```
 
-Add one entry per run. Repeating the simulator with different `Arguments` instances
+Add one entry per run. Repeating the simulator with different `args` dicts
 compares the same experiment under different parameters.
 
 ### 4. Call `gen_simulator`, then `compare_results`
@@ -78,7 +84,7 @@ collected = []
 for scenario in scenarios_list:
     results, analysis = gen_simulator(
         cap=10**6,
-        simulator_w_args=scenario,
+        spec=scenario,
         show_args=True,
         should_plot=True,
     )
@@ -100,7 +106,7 @@ if len(collected) > 1:
 | `cap` | `int` | Number of simulation trials (e.g. `10**6`) |
 | `show_args` | `bool` | Print the argument values alongside results |
 | `should_plot` | `bool` | Show proportion and cumulative-probability charts per scenario |
-| `should_compare` | `bool` | Show combined proportion and cumulative-probability charts |
+| `plot_mode` | `str` | (template only) `"none"` \| `"individual"` \| `"compare"` \| `"both"` — controls which plots are shown; derives `should_plot` and whether `compare_results` is called |
 | `seed` | `int \| None` | Integer seed for Numba's RNG; `None` (default) means no seeding |
 | `percentiles` | `Sequence[float]` | Percentile values to report; defaults to `(10, 25, 50, 75, 90)` |
 | `prob_thresholds` | `Sequence[float] \| None` | If set, prints `P(X >= t)` and `P(X <= t)` for each `t` |
